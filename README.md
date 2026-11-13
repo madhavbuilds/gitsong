@@ -4,7 +4,7 @@
 
 <a href="https://madhavbuilds.github.io/gitsong/"><img src="docs/madhavbuilds.svg" width="100%" alt="gitsong for @madhavbuilds: the contribution graph lighting up note by note"></a>
 
-### ▶ [Listen to it](https://madhavbuilds.github.io/gitsong/) · [download the WAV](docs/madhavbuilds.wav)
+### ▶ [Listen to it](https://madhavbuilds.github.io/gitsong/) · [watch the video (with sound)](docs/madhavbuilds.mp4) · [download the WAV](docs/madhavbuilds.wav)
 
 A year of commits is 53 weeks × 7 days. That's a sequencer grid. gitsong reads anyone's
 public contribution graph and composes it into about 40 seconds of music. It needs no
@@ -17,7 +17,7 @@ python gitsong.py your-github-username
 ```
 
 ```
-@madhavbuilds: 994 contributions over 53 weeks. Composing...
+@madhavbuilds: 1,001 contributions over 53 weeks. Composing...
 38.8s of audio -> out/madhavbuilds.wav, madhavbuilds.svg, madhavbuilds.html
 ```
 
@@ -28,6 +28,7 @@ You get three files:
 | `out/<user>.wav` | The song. 44.1 kHz stereo. |
 | `out/<user>.svg` | An animated graph that lights up in time with the music. You can drop it into your profile README. |
 | `out/<user>.html` | A player page that plays the WAV with the graph and a playhead. Click anywhere to seek. |
+| `out/<user>.mp4` | With `--video`: a square 1080×1080 video with sound, ready to post. Needs Pillow and ffmpeg. |
 
 ## How the graph becomes music
 
@@ -50,6 +51,7 @@ python gitsong.py torvalds --bpm 120          # faster
 python gitsong.py gaearon --key A             # A minor instead of D minor
 python gitsong.py you --json data.json        # from a saved GraphQL contributionCalendar
 python gitsong.py you --out somewhere/        # choose the output folder
+python gitsong.py you --video                 # also render a square MP4 to post (pip install pillow, plus ffmpeg)
 ```
 
 ## Put it on your profile

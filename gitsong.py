@@ -505,6 +505,147 @@ addEventListener('resize', layout); layout(); draw();
 
 
 # --------------------------------------------------------------------------------------
+# Video (optional): a square MP4 with the song, for posting. Needs Pillow and ffmpeg.
+# --------------------------------------------------------------------------------------
+FONT_URLS = {
+    "sans": "https://raw.githubusercontent.com/google/fonts/main/ofl/inter/Inter%5Bopsz%2Cwght%5D.ttf",
+    "mono": "https://raw.githubusercontent.com/google/fonts/main/ofl/jetbrainsmono/JetBrainsMono%5Bwght%5D.ttf",
+}
+FONT_FALLBACKS = {
+    "sans": ["/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+             "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", "C:/Windows/Fonts/arialbd.ttf"],
+    "mono": ["/System/Library/Fonts/Menlo.ttc",
+             "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", "C:/Windows/Fonts/consola.ttf"],
+}
+
+
+def font(kind, size, weight=None):
+    from PIL import ImageFont
+    cache = Path.home() / ".cache" / "gitsong"
+    path = cache / f"{kind}.ttf"
+    try:
+        if not path.exists():
+            cache.mkdir(parents=True, exist_ok=True)
+            req = urllib.request.Request(FONT_URLS[kind], headers={"User-Agent": "gitsong"})
+            with urllib.request.urlopen(req, timeout=30) as r:
+                path.write_bytes(r.read())
+        f = ImageFont.truetype(str(path), size)
+        if weight:
+            try:
+                axes = f.get_variation_axes()
+                f.set_variation_by_axes([weight if a.get("name") in (b"Weight", "Weight")
+                                         else a.get("default", 14) for a in axes])
+            except Exception:
+                pass
+        return f
+    except Exception:
+        for p in FONT_FALLBACKS[kind]:
+            if Path(p).exists():
+                return ImageFont.truetype(p, size)
+        return ImageFont.load_default(size)
+
+
+def hexrgb(h):
+    return tuple(int(h[i:i + 2], 16) for i in (1, 3, 5))
+
+
+def blend(a, b, t):
+    return tuple(round(x + (y - x) * t) for x, y in zip(a, b))
+
+
+def render_video(path, wav_path, user, weeks, info, bins, total, bpm, key, fps=30):
+    import shutil
+    import subprocess
+    try:
+        from PIL import Image, ImageDraw
+    except ImportError:
+        sys.exit("--video needs Pillow: pip install pillow")
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        sys.exit("--video needs ffmpeg on your PATH")
+
+    S = 1080
+    bg, ink, dim, faint, pink = (7, 8, 13), (244, 241, 255), (139, 134, 168), (95, 90, 122), \
+        hexrgb("#ff79e1")
+    levels = [hexrgb(c) for c in LEVELS]
+    step = (S - 120) / len(weeks)
+    cell = step * .78
+    gx, gy = 60 + (step - cell) / 2, 400
+    wy, wh = 720, 160
+    beat, t0, T = info["beat"], info["t0"], info["duration"]
+
+    f_kick, f_title = font("mono", 24, 600), font("sans", 76, 800)
+    f_sub, f_big = font("sans", 34, 500), font("sans", 46, 700)
+    f_small, f_mono = font("sans", 26, 400), font("mono", 24, 400)
+
+    base = Image.new("RGB", (S, S), bg)
+    d = ImageDraw.Draw(base)
+    d.text((60, 92), "GITSONG", font=f_kick, fill=pink)
+    d.text((60, 130), f"@{user}", font=f_title, fill=ink)
+    d.text((60, 230), "a year on GitHub, played as a song", font=f_sub, fill=dim)
+    d.text((60, 300), f"{total:,} contributions  ·  {key} minor  ·  {bpm} bpm  ·  "
+                      f"one week per beat", font=f_mono, fill=faint)
+    cells = [dd for w in weeks for dd in w if dd]
+    for c in cells:
+        x, y = gx + c.week * step, gy + c.row * step
+        d.rounded_rectangle([x, y, x + cell, y + cell], radius=cell * .22, fill=levels[c.level])
+    d.text((60, S - 110), "github.com/madhavbuilds/gitsong", font=f_mono, fill=dim)
+    bw = (S - 120) / len(bins)
+    mid = wy + wh / 2
+
+    def bars(draw, upto, colour):
+        for i, v in enumerate(bins[:upto]):
+            h = max(3, v * wh)
+            draw.rounded_rectangle([60 + i * bw, mid - h / 2, 60 + i * bw + max(1, bw - 2),
+                                    mid + h / 2], radius=1, fill=colour)
+    bars(d, len(bins), (38, 35, 58))
+
+    proc = subprocess.Popen([ffmpeg, "-y", "-loglevel", "error", "-f", "rawvideo",
+                             "-pix_fmt", "rgb24", "-s", f"{S}x{S}", "-r", str(fps), "-i", "-",
+                             "-i", str(wav_path), "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                             "-crf", "20", "-preset", "medium", "-c:a", "aac", "-b:a", "192k",
+                             "-shortest", "-movflags", "+faststart", str(path)],
+                            stdin=subprocess.PIPE)
+    lit = [c for c in cells if c.level]
+    for k in range(int(T * fps)):
+        t = k / fps
+        im = base.copy()
+        dr = ImageDraw.Draw(im)
+        bars(dr, int(t / T * len(bins)), (184, 75, 216))
+        current = None
+        for c in lit:
+            age = t - c.t
+            if 0 <= age < .6:
+                x, y = gx + c.week * step, gy + c.row * step
+                kf = 1 - age / .6
+                for grow, mixt in ((1.0 + 1.6 * kf, .25 * kf), (1.0 + .9 * kf, .9 * kf)):
+                    g = cell * grow
+                    cx, cy = x + cell / 2, y + cell / 2
+                    col = blend(levels[c.level], (255, 255, 255) if grow < 2 else pink, mixt)
+                    dr.rounded_rectangle([cx - g / 2, cy - g / 2, cx + g / 2, cy + g / 2],
+                                         radius=g * .25, fill=col)
+        for c in cells:
+            if 0 <= t - c.t < beat / 7 * 3:
+                current = c
+        if t0 <= t < info["end"] + beat:
+            px = 60 + (t - t0) / beat * step
+            dr.rounded_rectangle([px - 2, gy - 22, px + 2, gy + 7 * step + 14], radius=2, fill=pink)
+        if current:
+            dd = current.date
+            dr.text((60, 572), f"{dd:%a} {dd.day} {dd:%b %Y}", font=f_big, fill=ink)
+            n = current.count
+            dr.text((60, 632), f"{n} contribution{'' if n == 1 else 's'}", font=f_small,
+                    fill=pink if n else faint)
+        elif t >= info["end"]:
+            dr.text((60, 572), "fin.", font=f_big, fill=ink)
+            dr.text((60, 632), "that was the year", font=f_small, fill=faint)
+        proc.stdin.write(im.tobytes())
+    proc.stdin.close()
+    if proc.wait():
+        sys.exit("ffmpeg failed")
+
+
+# --------------------------------------------------------------------------------------
 def main():
     ap = argparse.ArgumentParser(description="Turn a GitHub contribution graph into a song.")
     ap.add_argument("user", help="GitHub username")
@@ -512,6 +653,8 @@ def main():
     ap.add_argument("--bpm", type=int, default=96, help="tempo, one week per beat (96)")
     ap.add_argument("--key", default="D", choices=sorted(NOTES), help="minor key (D)")
     ap.add_argument("--out", default="out", help="output folder (out)")
+    ap.add_argument("--video", action="store_true",
+                    help="also render a square MP4 with sound (needs Pillow and ffmpeg)")
     args = ap.parse_args()
 
     days = load_json(args.json) if args.json else fetch_user(args.user)
@@ -531,6 +674,11 @@ def main():
         render_html(args.user, weeks, info, bins, total, args.bpm, args.key, f"{stem}.wav"),
         encoding="utf-8")
     print(f"{info['duration']:.1f}s of audio -> {out}/{stem}.wav, {stem}.svg, {stem}.html")
+    if args.video:
+        print("Rendering video...")
+        render_video(out / f"{stem}.mp4", out / f"{stem}.wav", args.user, weeks, info, bins,
+                     total, args.bpm, args.key)
+        print(f"-> {out}/{stem}.mp4")
 
 
 if __name__ == "__main__":
